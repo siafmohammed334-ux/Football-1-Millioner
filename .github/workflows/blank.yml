@@ -1,0 +1,86 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: |
+          ZIP=$(find . -maxdepth 3 -iname "*.zip" | head -n 1)
+          echo "Found: $ZIP"
+          unzip -q -o "$ZIP"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        working-directory: football-millionaire
+        run: npm install
+
+      - name: Copy Arabic font
+        working-directory: football-millionaire
+        run: |
+          mkdir -p www/fonts
+          cp node_modules/@fontsource/cairo/files/cairo-arabic-700-normal.woff2 www/fonts/
+          cp node_modules/@fontsource/cairo/files/cairo-arabic-900-normal.woff2 www/fonts/
+
+      - name: Build questions and config
+        working-directory: football-millionaire
+        run: node scripts/build-questions.js
+
+      - name: Create splash image
+        working-directory: football-millionaire
+        run: |
+          pip install pillow
+          python3 - <<'PY'
+          from PIL import Image
+          icon = Image.open("assets/icon.png").convert("RGB").resize((1100, 1100))
+          bg = Image.new("RGB", (2732, 2732), (3, 8, 24))
+          bg.paste(icon, ((2732 - 1100) // 2, (2732 - 1100) // 2))
+          bg.save("assets/splash.png")
+          bg.save("assets/splash-dark.png")
+          PY
+
+      - name: Add Android platform
+        working-directory: football-millionaire
+        run: npx cap add android
+
+      - name: Generate icons and splash
+        working-directory: football-millionaire
+        run: npx capacitor-assets generate --android --iconBackgroundColor "#030818" --splashBackgroundColor "#030818"
+
+      - name: Lock portrait orientation
+        working-directory: football-millionaire
+        run: sed -i 's/<activity /<activity android:screenOrientation="portrait" /' android/app/src/main/AndroidManifest.xml
+
+      - name: Sync web assets
+        working-directory: football-millionaire
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: football-millionaire/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-millionaire-apk
+          path: football-millionaire/android/app/build/outputs/apk/debug/app-debug.apk
